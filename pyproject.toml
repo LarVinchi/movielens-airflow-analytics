@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "movielens-airflow-analytics"
+version = "0.1.0"
+description = "Production-grade MovieLens data pipeline with Airflow"
+requires-python = ">=3.10"
+
+dependencies = [
+    # Airflow is excluded here to avoid Windows conflicts; it runs in Docker.
+    "requests",
+    "pandas",
+    "sqlalchemy",
+    "psycopg2-binary",
+    "python-dotenv"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
