@@ -41,14 +41,8 @@ def get_earliest_date_from_db():
 def resolve_next_window(**context):
     """
     Decides which month to process.
-    
-    Logic Flow:
-    1. Did the user manually type a date? -> Use that. (Mode: Manual)
-    2. Is there a saved Cursor? -> Use Cursor + 1 Month. (Mode: Auto)
-    3. Is this the first run ever? -> Find earliest DB date. (Mode: Auto)
     """
     # --- 1. Check for Manual Configuration ---
-    # The 'params' from the UI are available here
     params = context["params"]
     manual_date = params.get("start_date")
     
@@ -60,7 +54,7 @@ def resolve_next_window(**context):
             "year_month": manual_date,
             "start": dt.strftime("%Y-%m-01"),
             "end": (dt + relativedelta(months=1)).strftime("%Y-%m-01"),
-            "mode": "manual" # <--- FLAG TO SKIP CURSOR UPDATE
+            "mode": "manual"
         }
 
     # --- 2. Automatic Cursor Logic ---
@@ -71,6 +65,14 @@ def resolve_next_window(**context):
         # First Run Ever
         logger.info("No cursor found. Querying DB for start date...")
         earliest = get_earliest_date_from_db()
+        
+        # --- FIX: STRIP TIMEZONE INFO ---
+        # The DB returns a Timezone-Aware date, but utcnow() is Naive.
+        # We remove the timezone to make them comparable.
+        if earliest.tzinfo is not None:
+            earliest = earliest.replace(tzinfo=None)
+        # --------------------------------
+            
         target_date = earliest.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         logger.info(f"Earliest date found: {target_date.strftime('%Y-%m')}")
     else:
@@ -80,7 +82,6 @@ def resolve_next_window(**context):
         logger.info(f"Cursor found ({cursor_str}). Next target: {target_date.strftime('%Y-%m')}")
 
     # --- 3. Future Guardrail ---
-    # Don't let the cursor run into the future. Stop at "Last Month".
     current_month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     if target_date >= current_month_start:
