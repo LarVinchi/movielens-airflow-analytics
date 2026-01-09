@@ -33,59 +33,65 @@ def get_earliest_date_from_db():
 
 def resolve_next_window(**context):
     """
-    Decides which month to process today based on the Cursor.
+    Decides which month to process.
+    PRIORITY 1: Manual Config (if you triggered it manually).
+    PRIORITY 2: Cursor (Automatic daily catchup).
     """
+    # 1. Check for Manual Configuration
+    dag_conf = context["dag_run"].conf
+    if dag_conf and "start_date" in dag_conf:
+        # User entered JSON: {"start_date": "1996-05"}
+        manual_date = dag_conf["start_date"]
+        logger.info(f"MANUAL RUN DETECTED: {manual_date}")
+        
+        # Calculate end date
+        dt = datetime.strptime(manual_date, "%Y-%m")
+        end_dt = dt + relativedelta(months=1)
+        
+        return {
+            "year_month": manual_date,
+            "start": dt.strftime("%Y-%m-01"),
+            "end": end_dt.strftime("%Y-%m-01"),
+            "mode": "manual" # <--- FLAG TO SKIP CURSOR
+        }
+
+    # 2. Automatic Cursor Logic (If no manual config)
     cursor_str = Variable.get(CURSOR_KEY, default_var=None)
     
-    target_date = None
-
     if not cursor_str:
-        # Case A: First Run ever. Find the start.
-        logger.info("No cursor found. Fetching earliest date from DB...")
-        # Note: We must ensure Transform runs BEFORE this check in the DAG flow
-        # But for logic simplicity, we assume data exists or this task runs after transform
+        # First Run
+        logger.info("No cursor. Fetching DB earliest...")
         earliest = get_earliest_date_from_db()
-        target_date = earliest.replace(day=1) # Start of that month
-        logger.info(f"Earliest data found: {target_date.strftime('%Y-%m')}")
+        target_date = earliest.replace(day=1) 
     else:
-        # Case B: We have history. Next month!
+        # Next Month
         last_processed = datetime.strptime(cursor_str, "%Y-%m")
         target_date = last_processed + relativedelta(months=1)
-        logger.info(f"Cursor found ({cursor_str}). Moving to next month: {target_date.strftime('%Y-%m')}")
 
-    # Case C: Stop if we reached the future
-    # If target_date is This Month or Future, we might want to wait or just run normally
+    # Check against future
     current_month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    
     if target_date >= current_month_start:
-        logger.info("We have caught up to the present! Processing strictly last month only.")
-        # Logic: If we are 'caught up', we just behave like a normal monthly reporter
-        # We set target to Last Month
         target_date = current_month_start - relativedelta(months=1)
-    
-    # Format for Analytics
-    start_str = target_date.strftime("%Y-%m-01")
-    end_date = target_date + relativedelta(months=1)
-    end_str = end_date.strftime("%Y-%m-01")
-    
+
     return {
-        "year_month": target_date.strftime("%Y-%m"), # For updating cursor later
-        "start": start_str,
-        "end": end_str
+        "year_month": target_date.strftime("%Y-%m"),
+        "start": target_date.strftime("%Y-%m-01"),
+        "end": (target_date + relativedelta(months=1)).strftime("%Y-%m-01"),
+        "mode": "auto"
     }
 
 def update_cursor_task(**context):
-    """Updates the Airflow Variable so tomorrow we know what to do."""
+    """Only update cursor if this was an AUTOMATIC run."""
     window = context["ti"].xcom_pull(task_ids="resolve_window")
-    processed_month = window["year_month"]
     
-    # Safety: Don't update cursor if we are just re-running current month
-    current_month = datetime.utcnow().strftime("%Y-%m")
-    if processed_month < current_month:
-        Variable.set(CURSOR_KEY, processed_month)
-        logger.info(f"SUCCESS: Cursor updated to {processed_month}")
-    else:
-        logger.info("Caught up to present. Cursor remains at last completed month.")
+    if window.get("mode") == "manual":
+        logger.info("Manual run detected. Skipping cursor update to protect history.")
+        return
+
+    # Normal update logic
+    processed_month = window["year_month"]
+    Variable.set(CURSOR_KEY, processed_month)
+    logger.info(f"SUCCESS: Cursor updated to {processed_month}")
 
 def run_analytics_wrapper(**context):
     window = context["ti"].xcom_pull(task_ids="resolve_window")
