@@ -12,5 +12,5 @@ CREATE TABLE staging.ratings (
     user_id INTEGER,
     movie_id INTEGER,
     rating NUMERIC(2,1),
-    rating_timestamp TIMESTAMP
+    rating_timestamp BIGINT  -- <--- FIXED: Changed from TIMESTAMP to BIGINT
 );

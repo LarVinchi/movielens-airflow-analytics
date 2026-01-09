@@ -5,7 +5,8 @@ SELECT
     user_id,
     movie_id,
     rating,
-    rating_timestamp
+    -- Convert Unix Epoch (BIGINT) to a proper Timestamp object
+    to_timestamp(rating_timestamp) as rating_timestamp
 FROM staging.ratings
 WHERE rating IS NOT NULL
   AND rating BETWEEN 0.5 AND 5.0
