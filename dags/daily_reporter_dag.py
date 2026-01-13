@@ -33,34 +33,68 @@ def get_earliest_date_from_db():
         return result
 
 def resolve_next_window(**context):
+    """
+    Decides which time window to process.
+    - If 'start_date' param is provided: Runs a Manual range.
+    - If no params: Runs the next month based on the database cursor.
+    """
     params = context["params"]
-    manual_date = params.get("start_date")
-    
-    if manual_date:
-        logger.info(f"MANUAL RUN DETECTED: {manual_date}")
-        dt = datetime.strptime(manual_date, "%Y-%m")
+    manual_start = params.get("start_date")
+    manual_end = params.get("end_date")
+
+    # --- 1. Manual Run Logic ---
+    if manual_start:
+        logger.info(f"MANUAL RUN DETECTED: Start={manual_start}, End={manual_end}")
+        
+        # Parse Start Date
+        # Try YYYY-MM-DD first, fall back to YYYY-MM
+        try:
+            start_dt = datetime.strptime(manual_start, "%Y-%m-%d")
+        except ValueError:
+            start_dt = datetime.strptime(manual_start, "%Y-%m")
+
+        # Parse End Date
+        if manual_end:
+            try:
+                end_dt = datetime.strptime(manual_end, "%Y-%m-%d")
+            except ValueError:
+                end_dt = datetime.strptime(manual_end, "%Y-%m")
+        else:
+            # Default behavior: If no end date, do exactly 1 month
+            end_dt = start_dt + relativedelta(months=1)
+
         return {
-            "year_month": manual_date,
-            "start": dt.strftime("%Y-%m-01"),
-            "end": (dt + relativedelta(months=1)).strftime("%Y-%m-01"),
+            "year_month": manual_start, # Label for email subject
+            "start": start_dt.strftime("%Y-%m-%d"),
+            "end": end_dt.strftime("%Y-%m-%d"),
             "mode": "manual"
         }
 
+    # --- 2. Automatic Cursor Logic (Existing) ---
     cursor_str = Variable.get(VARIABLE_KEY, default_var=None)
+    target_date = None
     
     if not cursor_str:
+        # First Run Ever: Check DB for earliest data
         logger.info("No cursor found. Querying DB for start date...")
         earliest = get_earliest_date_from_db()
-        # Ensure naive datetime
+        
+        # Strip Timezone if present
         if earliest.tzinfo is not None:
             earliest = earliest.replace(tzinfo=None)
+            
         target_date = earliest.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        logger.info(f"Earliest date found: {target_date.strftime('%Y-%m')}")
     else:
+        # Continue from last saved point
         last_processed = datetime.strptime(cursor_str, "%Y-%m")
         target_date = last_processed + relativedelta(months=1)
+        logger.info(f"Cursor found ({cursor_str}). Next target: {target_date.strftime('%Y-%m')}")
 
-    # Future Guardrail
+    # --- 3. Future Guardrail ---
+    # Don't let the auto-runner process the current unfinished month
     current_month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
     if target_date >= current_month_start:
         logger.info("Caught up to present! Processing last completed month only.")
         target_date = current_month_start - relativedelta(months=1)
